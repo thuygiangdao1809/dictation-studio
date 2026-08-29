@@ -5,6 +5,7 @@ Web app luyện nghe chép chính tả (dictation): phát audio, tự tách câu
 ## Tính năng
 
 - Thêm bài học (tên + transcript + audio + bản dịch tiếng Việt tùy chọn), hoặc thêm hàng loạt nhiều bài cùng lúc.
+- Transcript và bản dịch nhập chung 1 ô, ngăn cách bằng dòng `---` (transcript ở trên, bản dịch ở dưới; nếu không có bản dịch chỉ cần bỏ qua phần `---`).
 - Tự động tách câu trong transcript theo dấu `.` `!` `?` (không cần mỗi câu một dòng).
 - Phát audio bằng Web Audio API (không dùng `<audio src>`) để tránh các giới hạn phát lại trên một số môi trường sandbox.
 - Đánh dấu **điểm bắt đầu** và **điểm kết thúc** cho từng câu ngay trên thanh phát (hiển thị vạch màu trực quan), lưu lại cho các lần luyện sau.

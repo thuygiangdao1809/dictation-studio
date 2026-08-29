@@ -26,6 +26,28 @@ function parseSentences(text) {
   return text.split("\n").flatMap(splitLineIntoSentences);
 }
 
+// Split one combined textarea into { transcript, translation } using a line
+// of three-or-more dashes ("---") as the separator between the two blocks.
+// If no separator is found, everything is treated as the transcript.
+const SPLIT_MARKER_RE = /^[ \t]*-{3,}[ \t]*$/m;
+function splitCombinedInput(text) {
+  const raw = text || "";
+  const match = raw.match(SPLIT_MARKER_RE);
+  if (!match) return { transcript: raw.trim(), translation: "" };
+  const idx = raw.indexOf(match[0]);
+  return {
+    transcript: raw.slice(0, idx).trim(),
+    translation: raw.slice(idx + match[0].length).trim(),
+  };
+}
+
+// Reverse of the above — used to pre-fill the combined textarea when editing
+// a lesson that already has separate transcript/translation fields stored.
+function joinCombinedInput(transcript, translation) {
+  if (!translation) return transcript || "";
+  return `${transcript || ""}\n---\n${translation}`;
+}
+
 function wordDiff(ref, input) {
   const rw = normalize(ref).split(/\s+/).filter(Boolean);
   const iw = normalize(input).split(/\s+/).filter(Boolean);
@@ -351,7 +373,7 @@ function Tag({ children, tone = "muted" }) {
     ok: { bg: C.okBg, color: C.ok }, warn: { bg: C.warnBg, color: C.warn },
     bad: { bg: C.badBg, color: C.bad }, muted: { bg: C.panel2, color: C.textMuted },
   }[tone];
-  return <span style={{ fontSize: 11, background: map.bg, color: map.color, padding: "3px 9px", borderRadius: 6, fontWeight: 600, fontFamily: FONT_MONO }}>{children}</span>;
+  return <span style={{ fontSize: 10.5, background: map.bg, color: map.color, padding: "2px 7px", borderRadius: 5, fontWeight: 600, fontFamily: FONT_MONO, whiteSpace: "nowrap" }}>{children}</span>;
 }
 
 function AudioUploadBox({ hasAudio, label, onFileChange, small, error }) {
@@ -399,19 +421,18 @@ export default function DictationApp() {
   const [showHistory, setShowHistory] = useState(false);
   const [sortBy, setSortBy] = useState("recent"); // "recent" | "az"
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", transcript: "", translation: "" });
+  const [editForm, setEditForm] = useState({ name: "", content: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioErr, setAudioErr] = useState(null);
 
   const [addName, setAddName] = useState("");
-  const [addTranscript, setAddTranscript] = useState("");
-  const [addTranslation, setAddTranslation] = useState("");
+  const [addContent, setAddContent] = useState("");
   const [addAudio, setAddAudio] = useState(null); // {dataUrl,name,size}
   const [addAudioErr, setAddAudioErr] = useState(null);
 
-  const [bulkEntries, setBulkEntries] = useState([{ name: "", transcript: "", translation: "", audio: null, err: null }]);
+  const [bulkEntries, setBulkEntries] = useState([{ name: "", content: "", audio: null, err: null }]);
 
   const audioPlayerRef = useRef(null);
   const audioTimeRef = useRef(0);
@@ -565,30 +586,34 @@ export default function DictationApp() {
   };
 
   const addLesson = async () => {
-    if (!addName.trim() || !addTranscript.trim()) return;
+    const parsed = splitCombinedInput(addContent);
+    if (!addName.trim() || !parsed.transcript) return;
     setSaving(true);
     const lesson = {
-      id: Date.now().toString(), name: addName.trim(), transcript: addTranscript.trim(),
-      translation: addTranslation.trim() || null,
+      id: Date.now().toString(), name: addName.trim(), transcript: parsed.transcript,
+      translation: parsed.translation || null,
       createdAt: new Date().toISOString(), audioDataUrl: addAudio?.dataUrl || null, audioFileName: addAudio?.name || null,
     };
     await saveLessons([...lessons, lesson]);
-    setAddName(""); setAddTranscript(""); setAddTranslation(""); setAddAudio(null); setAddAudioErr(null);
+    setAddName(""); setAddContent(""); setAddAudio(null); setAddAudioErr(null);
     setSaving(false);
     setPage("library");
   };
 
   const bulkAdd = async () => {
-    const valid = bulkEntries.filter(e => e.name.trim() && e.transcript.trim());
+    const valid = bulkEntries.filter(e => e.name.trim() && splitCombinedInput(e.content).transcript);
     if (valid.length === 0) return;
     setSaving(true);
-    const newLessons = valid.map((e, i) => ({
-      id: (Date.now() + i).toString(), name: e.name.trim(), transcript: e.transcript.trim(),
-      translation: e.translation?.trim() || null,
-      createdAt: new Date().toISOString(), audioDataUrl: e.audio?.dataUrl || null, audioFileName: e.audio?.name || null,
-    }));
+    const newLessons = valid.map((e, i) => {
+      const parsed = splitCombinedInput(e.content);
+      return {
+        id: (Date.now() + i).toString(), name: e.name.trim(), transcript: parsed.transcript,
+        translation: parsed.translation || null,
+        createdAt: new Date().toISOString(), audioDataUrl: e.audio?.dataUrl || null, audioFileName: e.audio?.name || null,
+      };
+    });
     await saveLessons([...lessons, ...newLessons]);
-    setBulkEntries([{ name: "", transcript: "", translation: "", audio: null, err: null }]);
+    setBulkEntries([{ name: "", content: "", audio: null, err: null }]);
     setSaving(false);
     setPage("library");
   };
@@ -596,8 +621,9 @@ export default function DictationApp() {
   const deleteLesson = async (id) => { await saveLessons(lessons.filter(l => l.id !== id)); setDeleteConfirm(null); };
 
   const saveEdit = async () => {
-    if (!editForm.name.trim() || !editForm.transcript.trim()) return;
-    const updated = lessons.map(l => l.id === editingId ? { ...l, name: editForm.name.trim(), transcript: editForm.transcript.trim(), translation: editForm.translation?.trim() || null } : l);
+    const parsed = splitCombinedInput(editForm.content);
+    if (!editForm.name.trim() || !parsed.transcript) return;
+    const updated = lessons.map(l => l.id === editingId ? { ...l, name: editForm.name.trim(), transcript: parsed.transcript, translation: parsed.translation || null } : l);
     await saveLessons(updated);
     setEditingId(null);
   };
@@ -606,6 +632,13 @@ export default function DictationApp() {
     const lr = results.filter(r => r.lessonId === lessonId);
     return lr.length > 0 ? lr[lr.length - 1] : null;
   };
+
+  // Shared ordering (respects the library's current sort choice) so "next
+  // lesson" on the results screen matches what the person sees in the list.
+  const getSortedLessons = () => [...lessons].sort((a, b) => {
+    if (sortBy === "az") return a.name.localeCompare(b.name, "vi", { sensitivity: "base" });
+    return (b.createdAt || "").localeCompare(a.createdAt || "");
+  });
 
   const clearAllData = async () => {
     try { await storage.delete(SK_LESSONS); } catch {}
@@ -679,13 +712,7 @@ export default function DictationApp() {
                     <div style={{ fontSize: 16, marginTop: 18, marginBottom: 6, color: C.textSec, fontFamily: FONT_HEAD, fontWeight: 600 }}>Chưa có bài nào</div>
                     <div style={{ fontSize: 13.5 }}>Thêm bài mới để bắt đầu luyện tập</div>
                   </div>
-                ) : [...lessons]
-                    .sort((a, b) => {
-                      if (sortBy === "az") return a.name.localeCompare(b.name, "vi", { sensitivity: "base" });
-                      // "recent": newest added first
-                      return (b.createdAt || "").localeCompare(a.createdAt || "");
-                    })
-                    .map(lesson => {
+                ) : getSortedLessons().map(lesson => {
                   const lr = getLastResult(lesson.id);
                   const sc = parseSentences(lesson.transcript).length;
                   const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
@@ -694,10 +721,9 @@ export default function DictationApp() {
                   if (editingId === lesson.id) return (
                     <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
                       <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
-                      <textarea style={{ ...inpS, minHeight: 100, resize: "vertical", marginBottom: 10 }} value={editForm.transcript} placeholder="Transcript"
-                        onChange={e => setEditForm(p => ({ ...p, transcript: e.target.value }))} />
-                      <textarea style={{ ...inpS, minHeight: 100, resize: "vertical", marginBottom: 10 }} value={editForm.translation} placeholder="Bản dịch tiếng Việt (không bắt buộc)"
-                        onChange={e => setEditForm(p => ({ ...p, translation: e.target.value }))} />
+                      <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 10, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
+                        placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
+                        onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
                       <div style={{ display: "flex", gap: 8 }}>
                         <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
                         <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
@@ -706,36 +732,36 @@ export default function DictationApp() {
                   );
 
                   return (
-                    <div key={lesson.id} style={{ ...cardS, cursor: "pointer" }}
+                    <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer" }}
                       onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
                       onMouseLeave={e => e.currentTarget.style.borderColor = C.line}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
                         <div onClick={() => startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 7, display: "flex", alignItems: "center", gap: 8, fontFamily: FONT_HEAD }}>
-                            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lesson.name}</span>
-                          </div>
-                          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                            {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa có audio</Tag>}
-                            {lesson.translation && <Tag>có bản dịch</Tag>}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
+                            <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                              {lesson.name}
+                            </span>
+                            {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
+                            {lesson.translation && <Tag>dịch</Tag>}
                             <Tag>{sc} câu</Tag>
-                            <Tag>{totalAttempts} lần luyện</Tag>
+                            {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
+                            {lr && (
+                              <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                                · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
+                              </span>
+                            )}
                           </div>
-                          {lr && (
-                            <div style={{ fontSize: 13, color: C.textSec, fontFamily: FONT_MONO }}>
-                              lần cuối: <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
-                            </div>
-                          )}
                         </div>
-                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                          <button style={{ ...btnS("ghost"), padding: "6px 11px", fontSize: 13 }}
-                            onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, transcript: lesson.transcript, translation: lesson.translation || "" }); }}>✎</button>
+                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                          <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
+                            onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation) }); }}>✎</button>
                           {deleteConfirm === lesson.id ? (
                             <>
-                              <button style={{ ...btnS("danger"), padding: "6px 11px", fontSize: 13 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
-                              <button style={{ ...btnS("ghost"), padding: "6px 11px", fontSize: 13 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
+                              <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
+                              <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
                             </>
                           ) : (
-                            <button style={{ ...btnS("ghost"), padding: "6px 11px", fontSize: 13 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
+                            <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
                           )}
                         </div>
                       </div>
@@ -794,20 +820,19 @@ export default function DictationApp() {
                 onFileChange={f => { setAddAudioErr(null); handleAudioFilePick(f, setAddAudio, setAddAudioErr); }} />
             </div>
             <div style={{ marginBottom: 18 }}>
-              <label style={labelS}>Transcript (tự tách câu theo dấu . ! ?)</label>
-              <textarea style={{ ...inpS, minHeight: 160, resize: "vertical" }} value={addTranscript}
-                onChange={e => setAddTranscript(e.target.value)}
-                placeholder={"Dán cả đoạn hoặc từng dòng đều được, app sẽ tự tách câu theo dấu . ! ?\nVD: This is a cat. It is small! Is it yours?\n\n(Nội dung trong ngoặc tròn sẽ bị bỏ qua khi chấm)"} />
+              <label style={labelS}>Transcript + bản dịch (tự tách câu theo dấu . ! ?)</label>
+              <textarea style={{ ...inpS, minHeight: 260, resize: "vertical", fontFamily: FONT_MONO, fontSize: 13.5, lineHeight: 1.6 }} value={addContent}
+                onChange={e => setAddContent(e.target.value)}
+                placeholder={
+                  "Dán transcript (tiếng Anh), rồi tùy chọn thêm 1 dòng --- và dán bản dịch tiếng Việt bên dưới.\n\n" +
+                  "VD:\nThis is a cat. It is small! Is it yours?\n---\nĐây là một con mèo. Nó nhỏ! Nó có phải của bạn không?\n\n" +
+                  "(Nếu không có bản dịch, chỉ cần dán transcript, bỏ qua phần --- )\n(Nội dung trong ngoặc tròn sẽ bị bỏ qua khi chấm)"
+                } />
             </div>
-            <div style={{ marginBottom: 18 }}>
-              <label style={labelS}>Bản dịch tiếng Việt (không bắt buộc)</label>
-              <textarea style={{ ...inpS, minHeight: 160, resize: "vertical" }} value={addTranslation}
-                onChange={e => setAddTranslation(e.target.value)}
-                placeholder={"Dịch nghĩa từng câu, theo đúng thứ tự với transcript.\nVD: Đây là một con mèo. Nó nhỏ! Nó có phải của bạn không?"} />
-            </div>
-            {addTranscript.trim() && (() => {
-              const enCount = parseSentences(addTranscript).length;
-              const viCount = addTranslation.trim() ? parseSentences(addTranslation).length : null;
+            {addContent.trim() && (() => {
+              const { transcript, translation } = splitCombinedInput(addContent);
+              const enCount = parseSentences(transcript).length;
+              const viCount = translation ? parseSentences(translation).length : null;
               const mismatch = viCount !== null && viCount !== enCount;
               return (
                 <div style={{
@@ -820,10 +845,10 @@ export default function DictationApp() {
               );
             })()}
             <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...btnS("primary"), opacity: saving ? 0.6 : 1 }} onClick={addLesson} disabled={!addName.trim() || !addTranscript.trim() || saving}>
+              <button style={{ ...btnS("primary"), opacity: saving ? 0.6 : 1 }} onClick={addLesson} disabled={!addName.trim() || !splitCombinedInput(addContent).transcript || saving}>
                 {saving ? "Đang lưu…" : "Lưu bài"}
               </button>
-              <button style={btnS("ghost")} onClick={() => { setAddName(""); setAddTranscript(""); setAddTranslation(""); setAddAudio(null); setPage("library"); }}>Hủy</button>
+              <button style={btnS("ghost")} onClick={() => { setAddName(""); setAddContent(""); setAddAudio(null); setPage("library"); }}>Hủy</button>
             </div>
           </div>
         )}
@@ -852,13 +877,13 @@ export default function DictationApp() {
                         (err) => setBulkEntries(prev => { const n2 = [...prev]; n2[idx] = { ...n2[idx], err }; return n2; }));
                     }} />
                 </div>
-                <textarea style={{ ...inpS, minHeight: 90, resize: "vertical", marginBottom: 10 }} value={entry.transcript} placeholder="Transcript (tự tách câu theo dấu . ! ?)"
-                  onChange={e => { const n = [...bulkEntries]; n[idx] = { ...n[idx], transcript: e.target.value }; setBulkEntries(n); }} />
-                <textarea style={{ ...inpS, minHeight: 90, resize: "vertical" }} value={entry.translation} placeholder="Bản dịch tiếng Việt (không bắt buộc, theo đúng thứ tự câu)"
-                  onChange={e => { const n = [...bulkEntries]; n[idx] = { ...n[idx], translation: e.target.value }; setBulkEntries(n); }} />
-                {entry.transcript.trim() && (() => {
-                  const enCount = parseSentences(entry.transcript).length;
-                  const viCount = entry.translation?.trim() ? parseSentences(entry.translation).length : null;
+                <textarea style={{ ...inpS, minHeight: 130, resize: "vertical", fontFamily: FONT_MONO, fontSize: 13, lineHeight: 1.6 }} value={entry.content}
+                  placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
+                  onChange={e => { const n = [...bulkEntries]; n[idx] = { ...n[idx], content: e.target.value }; setBulkEntries(n); }} />
+                {entry.content.trim() && (() => {
+                  const { transcript, translation } = splitCombinedInput(entry.content);
+                  const enCount = parseSentences(transcript).length;
+                  const viCount = translation ? parseSentences(translation).length : null;
                   const mismatch = viCount !== null && viCount !== enCount;
                   return (
                     <div style={{ marginTop: 8, fontSize: 12, fontFamily: FONT_MONO, color: mismatch ? C.warn : C.textMuted }}>
@@ -869,13 +894,13 @@ export default function DictationApp() {
               </div>
             ))}
             <button style={{ ...btnS("ghost"), width: "100%", marginBottom: 20, borderStyle: "dashed" }}
-              onClick={() => setBulkEntries(prev => [...prev, { name: "", transcript: "", translation: "", audio: null, err: null }])}>＋ Thêm bài</button>
+              onClick={() => setBulkEntries(prev => [...prev, { name: "", content: "", audio: null, err: null }])}>＋ Thêm bài</button>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...btnS("primary"), opacity: saving ? 0.6 : 1 }} onClick={bulkAdd}
-                disabled={!bulkEntries.some(e => e.name.trim() && e.transcript.trim()) || saving}>
-                {saving ? "Đang lưu…" : `Lưu tất cả (${bulkEntries.filter(e => e.name.trim() && e.transcript.trim()).length} bài)`}
+                disabled={!bulkEntries.some(e => e.name.trim() && splitCombinedInput(e.content).transcript) || saving}>
+                {saving ? "Đang lưu…" : `Lưu tất cả (${bulkEntries.filter(e => e.name.trim() && splitCombinedInput(e.content).transcript).length} bài)`}
               </button>
-              <button style={btnS("ghost")} onClick={() => { setBulkEntries([{ name: "", transcript: "", translation: "", audio: null, err: null }]); setPage("library"); }}>Hủy</button>
+              <button style={btnS("ghost")} onClick={() => { setBulkEntries([{ name: "", content: "", audio: null, err: null }]); setPage("library"); }}>Hủy</button>
             </div>
           </div>
         )}
@@ -1092,10 +1117,24 @@ export default function DictationApp() {
                 ))}
               </div>
 
-              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28 }}>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
                 <button style={btnS("primary")} onClick={() => { setPage("library"); setShowHistory(false); }}>Quay lại thư viện</button>
                 <button style={btnS("outline")} onClick={() => startPractice(currentLesson)}>Luyện lại</button>
               </div>
+
+              {(() => {
+                const ordered = getSortedLessons();
+                const idx = ordered.findIndex(l => l.id === r.lessonId);
+                const nextLesson = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1] : null;
+                if (!nextLesson) return null;
+                return (
+                  <div style={{ marginTop: 14 }}>
+                    <button style={{ ...btnS("primary"), width: "100%", padding: "13px 20px" }} onClick={() => startPractice(nextLesson)}>
+                      Bài tiếp theo: {nextLesson.name} →
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           );
         })()}
