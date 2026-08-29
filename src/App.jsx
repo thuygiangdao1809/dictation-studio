@@ -434,6 +434,12 @@ export default function DictationApp() {
       if (e.key === "Shift") {
         e.preventDefault();
         replayFromBreakpoint();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        markStartBreakpoint();
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        markEndBreakpoint();
       }
     };
     window.addEventListener("keydown", handler);
@@ -932,7 +938,7 @@ export default function DictationApp() {
             </div>
 
             <div style={{ display: "flex", gap: 10, justifyContent: "center", margin: "12px 0 22px", flexWrap: "wrap" }}>
-              {[["Shift", "Nghe lại đoạn đã đánh dấu"], ["Enter", "Kiểm tra"]].map(([key, label]) => (
+              {[["Shift", "Nghe lại đoạn đã đánh dấu"], ["Enter", "Kiểm tra"], ["↑", "Đánh dấu điểm bắt đầu"], ["↓", "Đánh dấu điểm kết thúc"]].map(([key, label]) => (
                 <span key={key} style={{ fontSize: 12, color: C.textMuted }}>
                   <span style={{ background: C.panel2, padding: "3px 9px", borderRadius: 5, fontWeight: 700, fontSize: 11, color: C.text, marginRight: 6, fontFamily: FONT_MONO }}>{key}</span>
                   {label}
