@@ -15,7 +15,7 @@ Web app luyện nghe chép chính tả (dictation): phát audio, tự tách câu
 - Phải sửa đúng 100% mới chuyển sang câu tiếp theo.
 - Lưu lịch sử kết quả từng lần luyện tập (độ chính xác tổng thể + chi tiết từng câu).
 - Sắp xếp danh sách bài học theo **A–Z** hoặc theo **thời gian thêm**.
-- Toàn bộ dữ liệu (bài học, audio, mốc, lịch sử) lưu trong `localStorage` của trình duyệt — không cần server hay tài khoản.
+- Toàn bộ dữ liệu (bài học, audio, mốc, lịch sử) lưu trong `IndexedDB` của trình duyệt — không cần server hay tài khoản.
 
 ## Yêu cầu
 
@@ -89,4 +89,8 @@ Vite đã được cấu hình `base: "./"` trong `vite.config.js` nên bản bu
 
 ## Lưu ý về giới hạn dung lượng
 
-Audio được lưu dưới dạng base64 trực tiếp trong `localStorage`, giới hạn dung lượng thường vào khoảng 5–10MB tùy trình duyệt cho toàn bộ dữ liệu của trang. App giới hạn mỗi file audio tối đa khoảng 4.5MB (đủ cho các đoạn hội thoại/luyện nghe ngắn đến trung bình). Nếu cần lưu nhiều bài với audio dài hơn, cân nhắc thay `src/storage.js` bằng một backend (ví dụ IndexedDB hoặc một API lưu trữ phía server).
+Audio được lưu dưới dạng base64 trong `IndexedDB` của trình duyệt. IndexedDB có hạn mức lớn hơn nhiều so với `localStorage` (thường là hàng trăm MB đến vài GB, tùy trình duyệt và dung lượng đĩa trống), nên app có thể lưu nhiều bài học hơn và audio dài hơn. App giới hạn mỗi file audio tối đa khoảng 50MB — đây chỉ là mức trần hợp lý để tránh giao diện bị chậm khi mã hóa base64 file quá lớn, chứ không phải giới hạn cứng của trình duyệt.
+
+Nếu bạn từng dùng bản cũ (lưu trong `localStorage`), dữ liệu sẽ được **tự động chuyển sang IndexedDB** ngay lần đầu mở app sau khi cập nhật, không cần thao tác gì thêm.
+
+Nếu cần lưu trữ với dung lượng lớn hơn nữa hoặc chia sẻ dữ liệu giữa nhiều thiết bị, cân nhắc thay `src/storage.js` bằng một backend lưu trữ phía server.

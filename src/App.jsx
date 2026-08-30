@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "re
 
 const SK_LESSONS = "dictation:lessons-v4";
 const SK_RESULTS = "dictation:results-v4";
-const MAX_AUDIO_BYTES = 4.5 * 1024 * 1024; // storage value cap safety margin
+const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // storage now backed by IndexedDB, so the cap is just a sane per-file ceiling, not a hard browser quota limit
 
 function normalize(text) {
   return text.replace(/\([^)]*\)/g, "").toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "").replace(/\s+/g, " ").trim();
@@ -469,7 +469,7 @@ export default function DictationApp() {
 
   const handleAudioFilePick = async (file, onDone, onErr) => {
     if (file.size > MAX_AUDIO_BYTES) {
-      onErr(`File quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). Giới hạn ~4.5MB/bài.`);
+      onErr(`File quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). Giới hạn ~50MB/bài.`);
       return;
     }
     try {
