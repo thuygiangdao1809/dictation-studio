@@ -876,9 +876,37 @@ export default function DictationApp() {
       }
     }
     const groups = [...byTag.entries()]
-      .map(([level1Id, ls]) => ({ key: level1Id, level1Id, name: findLevel1(level1Id).name, lessons: sortAz(ls) }))
+      .map(([level1Id, ls]) => {
+        const level1Tag = findLevel1(level1Id);
+        // Only split into level-2 sub-groups when this tag actually has
+        // children — otherwise a flat, sorted list is simpler and enough.
+        if (!level1Tag.children.length) {
+          return { key: level1Id, level1Id, name: level1Tag.name, subgroups: null, lessons: sortAz(ls) };
+        }
+        const byLevel2 = new Map();
+        const noLevel2 = [];
+        for (const lesson of ls) {
+          if (lesson.level2TagId && level1Tag.children.some(c => c.id === lesson.level2TagId)) {
+            if (!byLevel2.has(lesson.level2TagId)) byLevel2.set(lesson.level2TagId, []);
+            byLevel2.get(lesson.level2TagId).push(lesson);
+          } else {
+            noLevel2.push(lesson);
+          }
+        }
+        const subgroups = [...byLevel2.entries()]
+          .map(([level2Id, subLs]) => ({
+            key: `${level1Id}::${level2Id}`, level2Id,
+            name: level1Tag.children.find(c => c.id === level2Id).name,
+            lessons: sortAz(subLs),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
+        if (noLevel2.length > 0) {
+          subgroups.push({ key: `${level1Id}::none`, level2Id: null, name: "Chưa gắn nhãn cấp 2", lessons: sortAz(noLevel2) });
+        }
+        return { key: level1Id, level1Id, name: level1Tag.name, subgroups, lessons: null };
+      })
       .sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
-    if (untagged.length > 0) groups.push({ key: "untagged", level1Id: null, name: "Chưa gắn nhãn", lessons: sortAz(untagged) });
+    if (untagged.length > 0) groups.push({ key: "untagged", level1Id: null, name: "Chưa gắn nhãn", subgroups: null, lessons: sortAz(untagged) });
     return groups;
   };
 
@@ -888,6 +916,82 @@ export default function DictationApp() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+  };
+
+  // Renders one lesson row (or its inline edit form when it's being edited).
+  // Shared by both the flat group listing and each level-2 sub-group listing.
+  const renderLessonRow = (lesson) => {
+    const lr = getLastResult(lesson.id);
+    const sc = parseSentences(lesson.transcript).length;
+    const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
+    const hasAudio = !!lesson.audioDataUrl;
+    const isSelected = selectedIds.has(lesson.id);
+    const l1 = lesson.level1TagId ? findLevel1(lesson.level1TagId) : null;
+    const l2 = l1 && lesson.level2TagId ? findLevel2(lesson.level1TagId, lesson.level2TagId) : null;
+
+    if (editingId === lesson.id) return (
+      <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
+        <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
+        <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 14, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
+          placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
+          onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
+        <label style={labelS}>Nhãn</label>
+        <div style={{ marginBottom: 14 }}>
+          <TagFields tags={tags} level1={editForm.level1TagId} level2={editForm.level2TagId}
+            onChangeLevel1={(id) => setEditForm(p => ({ ...p, level1TagId: id, level2TagId: null }))}
+            onChangeLevel2={(id) => setEditForm(p => ({ ...p, level2TagId: id }))} />
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
+          <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
+        </div>
+      </div>
+    );
+
+    return (
+      <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer", border: `1px solid ${isSelected ? C.amberLine : C.line}` }}
+        onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
+        onMouseLeave={e => e.currentTarget.style.borderColor = isSelected ? C.amberLine : C.line}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+          {selectMode && (
+            <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(lesson.id)}
+              onClick={(e) => e.stopPropagation()}
+              style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
+          )}
+          <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
+              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                {lesson.name}
+              </span>
+              {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
+              {lesson.translation && <Tag>dịch</Tag>}
+              <Tag>{sc} câu</Tag>
+              {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
+              {l1 && <Tag tone="ok">{l1.name}{l2 ? ` ▸ ${l2.name}` : ""}</Tag>}
+              {lr && (
+                <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                  · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
+                </span>
+              )}
+            </div>
+          </div>
+          {!selectMode && (
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
+                onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation), level1TagId: lesson.level1TagId || null, level2TagId: lesson.level2TagId || null }); }}>✎</button>
+              {deleteConfirm === lesson.id ? (
+                <>
+                  <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
+                  <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
+                </>
+              ) : (
+                <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const clearAllData = async () => {
@@ -1000,6 +1104,7 @@ export default function DictationApp() {
               </div>
             ) : getGroupedLessons().map(group => {
               const isExpanded = expandedGroups.has(group.key);
+              const totalCount = group.subgroups ? group.subgroups.reduce((s, sg) => s + sg.lessons.length, 0) : group.lessons.length;
               return (
                 <div key={group.key} style={{ marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isExpanded ? 8 : 0, cursor: "pointer" }}
@@ -1008,7 +1113,7 @@ export default function DictationApp() {
                     <span style={{ fontSize: 12.5, fontWeight: 700, color: group.level1Id ? C.amber : C.textMuted, fontFamily: FONT_HEAD }}>
                       {group.name}
                     </span>
-                    <span style={{ fontSize: 11, color: C.textMuted, fontFamily: FONT_MONO }}>{group.lessons.length} bài</span>
+                    <span style={{ fontSize: 11, color: C.textMuted, fontFamily: FONT_MONO }}>{totalCount} bài</span>
                     <div style={{ flex: 1, height: 1, background: C.line }} />
                     <button style={{ ...btnS("ghost"), padding: "4px 10px", fontSize: 11.5 }}
                       onClick={(e) => { e.stopPropagation(); toggleGroupExpanded(group.key); }}>
@@ -1016,79 +1121,35 @@ export default function DictationApp() {
                     </button>
                   </div>
 
-                  {isExpanded && group.lessons.map(lesson => {
-                    const lr = getLastResult(lesson.id);
-                    const sc = parseSentences(lesson.transcript).length;
-                    const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
-                    const hasAudio = !!lesson.audioDataUrl;
-                    const isSelected = selectedIds.has(lesson.id);
-                    const l1 = lesson.level1TagId ? findLevel1(lesson.level1TagId) : null;
-                    const l2 = l1 && lesson.level2TagId ? findLevel2(lesson.level1TagId, lesson.level2TagId) : null;
-
-                    if (editingId === lesson.id) return (
-                      <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
-                        <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
-                        <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 14, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
-                          placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
-                          onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
-                        <label style={labelS}>Nhãn</label>
-                        <div style={{ marginBottom: 14 }}>
-                          <TagFields tags={tags} level1={editForm.level1TagId} level2={editForm.level2TagId}
-                            onChangeLevel1={(id) => setEditForm(p => ({ ...p, level1TagId: id, level2TagId: null }))}
-                            onChangeLevel2={(id) => setEditForm(p => ({ ...p, level2TagId: id }))} />
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
-                          <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
-                        </div>
-                      </div>
-                    );
-
-                    return (
-                      <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer", border: `1px solid ${isSelected ? C.amberLine : C.line}` }}
-                        onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
-                        onMouseLeave={e => e.currentTarget.style.borderColor = isSelected ? C.amberLine : C.line}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                          {selectMode && (
-                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(lesson.id)}
-                              onClick={(e) => e.stopPropagation()}
-                              style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
-                          )}
-                          <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
-                              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
-                                {lesson.name}
-                              </span>
-                              {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
-                              {lesson.translation && <Tag>dịch</Tag>}
-                              <Tag>{sc} câu</Tag>
-                              {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
-                              {l1 && <Tag tone="ok">{l1.name}{l2 ? ` ▸ ${l2.name}` : ""}</Tag>}
-                              {lr && (
-                                <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
-                                  · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
+                  {isExpanded && (
+                    group.subgroups ? (
+                      <div style={{ paddingLeft: 22 }}>
+                        {group.subgroups.map(sub => {
+                          const isSubExpanded = expandedGroups.has(sub.key);
+                          return (
+                            <div key={sub.key} style={{ marginBottom: 12 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isSubExpanded ? 6 : 0, cursor: "pointer" }}
+                                onClick={() => toggleGroupExpanded(sub.key)}>
+                                <span style={{ fontSize: 11, color: C.textMuted, width: 12, display: "inline-block", transform: isSubExpanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
+                                <span style={{ fontSize: 12, fontWeight: 600, color: sub.level2Id ? C.textSec : C.textMuted, fontFamily: FONT_HEAD }}>
+                                  {sub.name}
                                 </span>
-                              )}
+                                <span style={{ fontSize: 10.5, color: C.textMuted, fontFamily: FONT_MONO }}>{sub.lessons.length} bài</span>
+                                <div style={{ flex: 1, height: 1, background: C.line }} />
+                                <button style={{ ...btnS("ghost"), padding: "3px 8px", fontSize: 11 }}
+                                  onClick={(e) => { e.stopPropagation(); toggleGroupExpanded(sub.key); }}>
+                                  {isSubExpanded ? "Thu gọn" : "Mở rộng"}
+                                </button>
+                              </div>
+                              {isSubExpanded && sub.lessons.map(lesson => renderLessonRow(lesson))}
                             </div>
-                          </div>
-                          {!selectMode && (
-                            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                              <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
-                                onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation), level1TagId: lesson.level1TagId || null, level2TagId: lesson.level2TagId || null }); }}>✎</button>
-                              {deleteConfirm === lesson.id ? (
-                                <>
-                                  <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
-                                  <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
-                                </>
-                              ) : (
-                                <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
-                              )}
-                            </div>
-                          )}
-                        </div>
+                          );
+                        })}
                       </div>
-                    );
-                  })}
+                    ) : (
+                      group.lessons.map(lesson => renderLessonRow(lesson))
+                    )
+                  )}
                 </div>
               );
             })}
