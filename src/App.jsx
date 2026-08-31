@@ -9,6 +9,14 @@ function normalize(text) {
   return text.replace(/\([^)]*\)/g, "").toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, "").replace(/\s+/g, " ").trim();
 }
 
+// Formats a byte count as a human-readable MB/GB string for the storage notice.
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return "0 MB";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
 // Split one line into sentences on '.', '!', '?' (runs like "...", "?!" count as one boundary).
 // A line with no terminal punctuation is kept as a single sentence.
 function splitLineIntoSentences(line) {
@@ -418,11 +426,13 @@ export default function DictationApp() {
   const [userInput, setUserInput] = useState("");
   const [checkResult, setCheckResult] = useState(null);
   const [sentenceData, setSentenceData] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [sortBy, setSortBy] = useState("recent"); // "recent" | "az"
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", content: "" });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [storageInfo, setStorageInfo] = useState(null); // { usage, quota } in bytes, or null if unavailable
   const [saving, setSaving] = useState(false);
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioErr, setAudioErr] = useState(null);
@@ -444,9 +454,28 @@ export default function DictationApp() {
       try { const d = await storage.get(SK_RESULTS); setResults(JSON.parse(d.value)); } catch { setResults([]); }
       setLoading(false);
     })();
+    refreshStorageInfo();
   }, []);
 
-  const saveLessons = async (ls) => { setLessons(ls); try { await storage.set(SK_LESSONS, JSON.stringify(ls)); } catch (e) { console.error(e); } };
+  // Reports how much storage the app (and the rest of the browser origin) is
+  // using, via the Storage API. Not supported in every browser, so it fails
+  // silently and simply hides the notice when unavailable.
+  const refreshStorageInfo = async () => {
+    try {
+      if (navigator.storage && navigator.storage.estimate) {
+        const est = await navigator.storage.estimate();
+        setStorageInfo({ usage: est.usage || 0, quota: est.quota || 0 });
+      }
+    } catch {
+      setStorageInfo(null);
+    }
+  };
+
+  const saveLessons = async (ls) => {
+    setLessons(ls);
+    try { await storage.set(SK_LESSONS, JSON.stringify(ls)); } catch (e) { console.error(e); }
+    refreshStorageInfo();
+  };
   const saveResults = async (rs) => { setResults(rs); try { await storage.set(SK_RESULTS, JSON.stringify(rs)); } catch (e) { console.error(e); } };
 
   useEffect(() => {
@@ -620,6 +649,30 @@ export default function DictationApp() {
 
   const deleteLesson = async (id) => { await saveLessons(lessons.filter(l => l.id !== id)); setDeleteConfirm(null); };
 
+  const toggleSelectMode = () => {
+    setSelectMode(m => !m);
+    setSelectedIds(new Set());
+    setBulkDeleteConfirm(false);
+  };
+
+  const toggleSelected = (id) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllLessons = () => setSelectedIds(new Set(lessons.map(l => l.id)));
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const deleteSelectedLessons = async () => {
+    await saveLessons(lessons.filter(l => !selectedIds.has(l.id)));
+    setSelectedIds(new Set());
+    setSelectMode(false);
+    setBulkDeleteConfirm(false);
+  };
+
   const saveEdit = async () => {
     const parsed = splitCombinedInput(editForm.content);
     if (!editForm.name.trim() || !parsed.transcript) return;
@@ -633,12 +686,9 @@ export default function DictationApp() {
     return lr.length > 0 ? lr[lr.length - 1] : null;
   };
 
-  // Shared ordering (respects the library's current sort choice) so "next
-  // lesson" on the results screen matches what the person sees in the list.
-  const getSortedLessons = () => [...lessons].sort((a, b) => {
-    if (sortBy === "az") return a.name.localeCompare(b.name, "vi", { sensitivity: "base" });
-    return (b.createdAt || "").localeCompare(a.createdAt || "");
-  });
+  // Lessons are always shown alphabetically (A–Z) so the library order stays
+  // predictable regardless of when lessons were added.
+  const getSortedLessons = () => [...lessons].sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
 
   const clearAllData = async () => {
     try { await storage.delete(SK_LESSONS); } catch {}
@@ -669,12 +719,12 @@ export default function DictationApp() {
       <FontImport />
       {/* Header */}
       <div style={{ background: C.panel, borderBottom: `1px solid ${C.line}`, padding: "16px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => { setPage("library"); setShowHistory(false); }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setPage("library")}>
           <Waveform bars={5} height={20} active color={C.amber} />
           <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.2px", fontFamily: FONT_HEAD }}>DICTATION STUDIO</span>
         </div>
         {page !== "library" && page !== "results" && (
-          <button style={btnS("ghost")} onClick={() => { setPage("library"); setShowHistory(false); }}>← Thư viện</button>
+          <button style={btnS("ghost")} onClick={() => setPage("library")}>← Thư viện</button>
         )}
       </div>
 
@@ -683,125 +733,125 @@ export default function DictationApp() {
         {/* ===== LIBRARY ===== */}
         {page === "library" && (
           <>
+            {storageInfo && storageInfo.quota > 0 && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                  <span style={{ fontSize: 11.5, color: C.textMuted, fontFamily: FONT_MONO, textTransform: "uppercase", letterSpacing: "0.04em" }}>Dung lượng lưu trữ</span>
+                  <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                    {formatBytes(storageInfo.usage)} / {formatBytes(storageInfo.quota)}
+                  </span>
+                </div>
+                <div style={{ height: 5, borderRadius: 3, background: C.panel2, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", borderRadius: 3,
+                    width: `${Math.min(100, (storageInfo.usage / storageInfo.quota) * 100).toFixed(2)}%`,
+                    background: (storageInfo.usage / storageInfo.quota) > 0.9 ? C.bad : (storageInfo.usage / storageInfo.quota) > 0.7 ? C.warn : C.amber,
+                  }} />
+                </div>
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
               <button style={btnS("primary")} onClick={() => setPage("addLesson")}>＋ Thêm bài</button>
               <button style={btnS("outline")} onClick={() => setPage("bulkImport")}>▤ Thêm hàng loạt</button>
-              <button style={{ ...btnS("ghost"), marginLeft: "auto" }} onClick={() => setShowHistory(!showHistory)}>
-                {showHistory ? "Bài học" : "Lịch sử ↗"}
-              </button>
+              {lessons.length > 0 && (
+                <button style={{ ...btnS(selectMode ? "primary" : "ghost"), marginLeft: "auto" }} onClick={toggleSelectMode}>
+                  {selectMode ? "Xong" : "Chọn nhiều"}
+                </button>
+              )}
             </div>
 
-            {!showHistory ? (
-              <>
-                {lessons.length > 0 && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-                    <span style={{ fontSize: 12, color: C.textMuted, fontFamily: FONT_MONO }}>Sắp xếp:</span>
-                    <button
-                      style={{ ...btnS(sortBy === "recent" ? "primary" : "ghost"), padding: "6px 12px", fontSize: 12.5 }}
-                      onClick={() => setSortBy("recent")}
-                    >Thời gian thêm</button>
-                    <button
-                      style={{ ...btnS(sortBy === "az" ? "primary" : "ghost"), padding: "6px 12px", fontSize: 12.5 }}
-                      onClick={() => setSortBy("az")}
-                    >A–Z</button>
-                  </div>
+            {selectMode && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, color: C.textSec, fontFamily: FONT_MONO }}>Đã chọn {selectedIds.size}/{lessons.length}</span>
+                <button style={{ ...btnS("ghost"), padding: "6px 12px", fontSize: 12.5 }} onClick={selectAllLessons}>Chọn tất cả</button>
+                <button style={{ ...btnS("ghost"), padding: "6px 12px", fontSize: 12.5 }} onClick={clearSelection}>Bỏ chọn</button>
+                {bulkDeleteConfirm ? (
+                  <>
+                    <button style={{ ...btnS("danger"), padding: "6px 12px", fontSize: 12.5 }} onClick={deleteSelectedLessons}>Xác nhận xóa {selectedIds.size} bài</button>
+                    <button style={{ ...btnS("ghost"), padding: "6px 12px", fontSize: 12.5 }} onClick={() => setBulkDeleteConfirm(false)}>Hủy</button>
+                  </>
+                ) : (
+                  <button style={{ ...btnS("danger"), padding: "6px 12px", fontSize: 12.5, opacity: selectedIds.size === 0 ? 0.5 : 1 }}
+                    disabled={selectedIds.size === 0} onClick={() => setBulkDeleteConfirm(true)}>🗑 Xóa đã chọn</button>
                 )}
-                {lessons.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "70px 20px", color: C.textMuted }}>
-                    <Waveform bars={20} height={36} />
-                    <div style={{ fontSize: 16, marginTop: 18, marginBottom: 6, color: C.textSec, fontFamily: FONT_HEAD, fontWeight: 600 }}>Chưa có bài nào</div>
-                    <div style={{ fontSize: 13.5 }}>Thêm bài mới để bắt đầu luyện tập</div>
-                  </div>
-                ) : getSortedLessons().map(lesson => {
-                  const lr = getLastResult(lesson.id);
-                  const sc = parseSentences(lesson.transcript).length;
-                  const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
-                  const hasAudio = !!lesson.audioDataUrl;
+              </div>
+            )}
 
-                  if (editingId === lesson.id) return (
-                    <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
-                      <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
-                      <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 10, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
-                        placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
-                        onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
-                        <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
-                      </div>
-                    </div>
-                  );
+            {lessons.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "70px 20px", color: C.textMuted }}>
+                <Waveform bars={20} height={36} />
+                <div style={{ fontSize: 16, marginTop: 18, marginBottom: 6, color: C.textSec, fontFamily: FONT_HEAD, fontWeight: 600 }}>Chưa có bài nào</div>
+                <div style={{ fontSize: 13.5 }}>Thêm bài mới để bắt đầu luyện tập</div>
+              </div>
+            ) : getSortedLessons().map(lesson => {
+              const lr = getLastResult(lesson.id);
+              const sc = parseSentences(lesson.transcript).length;
+              const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
+              const hasAudio = !!lesson.audioDataUrl;
+              const isSelected = selectedIds.has(lesson.id);
 
-                  return (
-                    <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer" }}
-                      onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
-                      onMouseLeave={e => e.currentTarget.style.borderColor = C.line}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                        <div onClick={() => startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
-                            <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
-                              {lesson.name}
-                            </span>
-                            {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
-                            {lesson.translation && <Tag>dịch</Tag>}
-                            <Tag>{sc} câu</Tag>
-                            {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
-                            {lr && (
-                              <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
-                                · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                          <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
-                            onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation) }); }}>✎</button>
-                          {deleteConfirm === lesson.id ? (
-                            <>
-                              <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
-                              <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
-                            </>
-                          ) : (
-                            <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-                {lessons.length > 0 && (
-                  <div style={{ marginTop: 30, textAlign: "center" }}>
-                    <button style={{ ...btnS("danger"), fontSize: 12, padding: "7px 14px" }} onClick={clearAllData}>Xóa toàn bộ dữ liệu</button>
-                  </div>
-                )}
-              </>
-            ) : (
-              results.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "70px 20px", color: C.textMuted }}>
-                  <div style={{ fontSize: 14 }}>Chưa có kết quả nào</div>
-                </div>
-              ) : [...results].reverse().map(r => (
-                <div key={r.id} style={cardS}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <span style={{ fontWeight: 700, fontFamily: FONT_HEAD }}>{r.lessonName}</span>
-                    <span style={{ fontSize: 22, fontWeight: 700, fontFamily: FONT_MONO, color: r.overallAccuracy >= 0.8 ? C.ok : r.overallAccuracy >= 0.5 ? C.warn : C.bad }}>
-                      {Math.round(r.overallAccuracy * 100)}%
-                    </span>
-                  </div>
-                  <div style={{ color: C.textMuted, fontSize: 12.5, fontFamily: FONT_MONO }}>
-                    {new Date(r.date).toLocaleDateString("vi-VN")} · {new Date(r.date).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} · {r.totalSentences} câu
-                  </div>
-                  <div style={{ marginTop: 10, display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {r.sentenceDetails?.map((s, i) => (
-                      <div key={i} title={`Câu ${i + 1}: ${Math.round(s.firstAccuracy * 100)}% (${s.attempts} lần)`}
-                        style={{
-                          width: 24, height: 24, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, fontFamily: FONT_MONO,
-                          background: s.firstAccuracy >= 0.8 ? C.okBg : s.firstAccuracy >= 0.5 ? C.warnBg : C.badBg,
-                          color: s.firstAccuracy >= 0.8 ? C.ok : s.firstAccuracy >= 0.5 ? C.warn : C.bad,
-                        }}>{i + 1}</div>
-                    ))}
+              if (editingId === lesson.id) return (
+                <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
+                  <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
+                  <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 10, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
+                    placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
+                    onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
+                    <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
                   </div>
                 </div>
-              ))
+              );
+
+              return (
+                <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer", border: `1px solid ${isSelected ? C.amberLine : C.line}` }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = isSelected ? C.amberLine : C.line}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    {selectMode && (
+                      <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(lesson.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
+                    )}
+                    <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
+                        <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                          {lesson.name}
+                        </span>
+                        {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
+                        {lesson.translation && <Tag>dịch</Tag>}
+                        <Tag>{sc} câu</Tag>
+                        {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
+                        {lr && (
+                          <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                            · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    {!selectMode && (
+                      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                        <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
+                          onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation) }); }}>✎</button>
+                        {deleteConfirm === lesson.id ? (
+                          <>
+                            <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
+                            <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
+                          </>
+                        ) : (
+                          <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {lessons.length > 0 && (
+              <div style={{ marginTop: 30, textAlign: "center" }}>
+                <button style={{ ...btnS("danger"), fontSize: 12, padding: "7px 14px" }} onClick={clearAllData}>Xóa toàn bộ dữ liệu</button>
+              </div>
             )}
           </>
         )}
@@ -1118,7 +1168,7 @@ export default function DictationApp() {
               </div>
 
               <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 28, flexWrap: "wrap" }}>
-                <button style={btnS("primary")} onClick={() => { setPage("library"); setShowHistory(false); }}>Quay lại thư viện</button>
+                <button style={btnS("primary")} onClick={() => setPage("library")}>Quay lại thư viện</button>
                 <button style={btnS("outline")} onClick={() => startPractice(currentLesson)}>Luyện lại</button>
               </div>
 
