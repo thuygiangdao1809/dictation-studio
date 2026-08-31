@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "re
 
 const SK_LESSONS = "dictation:lessons-v4";
 const SK_RESULTS = "dictation:results-v4";
+const SK_TAGS = "dictation:tags-v1";
 const MAX_AUDIO_BYTES = 50 * 1024 * 1024; // storage now backed by IndexedDB, so the cap is just a sane per-file ceiling, not a hard browser quota limit
 
 function normalize(text) {
@@ -384,6 +385,85 @@ function Tag({ children, tone = "muted" }) {
   return <span style={{ fontSize: 10.5, background: map.bg, color: map.color, padding: "2px 7px", borderRadius: 5, fontWeight: 600, fontFamily: FONT_MONO, whiteSpace: "nowrap" }}>{children}</span>;
 }
 
+// Inline panel for choosing a level-1 tag and, optionally, one of its level-2
+// sub-tags. Used both for tagging a single lesson and for bulk-tagging every
+// currently selected lesson (see `label` for which one is active).
+function TagPicker({ tags, level1, level2, onSelectLevel1, onSelectLevel2, onApply, onClear, onCancel, label }) {
+  const activeLevel1 = tags.find(t => t.id === level1) || null;
+  return (
+    <div style={{ ...cardS, border: `1px solid ${C.amberLine}`, background: C.panel2, marginTop: -4 }}>
+      <div style={{ fontSize: 12.5, color: C.textSec, marginBottom: 10, fontFamily: FONT_MONO }}>{label}</div>
+
+      {tags.length === 0 ? (
+        <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 10 }}>
+          Chưa có nhãn nào. Vào "🏷 Quản lý nhãn" trong thư viện để tạo nhãn trước.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: activeLevel1?.children.length ? 10 : 0 }}>
+            {tags.map(t => (
+              <button key={t.id} onClick={() => onSelectLevel1(t.id === level1 ? null : t.id)}
+                style={{ ...btnS(t.id === level1 ? "primary" : "outline"), padding: "6px 12px", fontSize: 12.5 }}>
+                {t.name}
+              </button>
+            ))}
+          </div>
+          {activeLevel1 && activeLevel1.children.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 12, borderLeft: `2px solid ${C.line}` }}>
+              {activeLevel1.children.map(c => (
+                <button key={c.id} onClick={() => onSelectLevel2(c.id === level2 ? null : c.id)}
+                  style={{ ...btnS(c.id === level2 ? "primary" : "ghost"), padding: "5px 11px", fontSize: 12 }}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button style={btnS("primary")} disabled={tags.length === 0} onClick={onApply}>Lưu nhãn</button>
+        <button style={btnS("ghost")} onClick={onClear}>Bỏ nhãn</button>
+        <button style={btnS("ghost")} onClick={onCancel}>Hủy</button>
+      </div>
+    </div>
+  );
+}
+
+// Bare tag selector (no apply/clear/cancel buttons) meant to be embedded
+// directly inside a form — e.g. the Add Lesson form or the inline Edit form —
+// where the selection is saved together with the rest of the form.
+function TagFields({ tags, level1, level2, onChangeLevel1, onChangeLevel2 }) {
+  const activeLevel1 = tags.find(t => t.id === level1) || null;
+  if (tags.length === 0) {
+    return <div style={{ fontSize: 12.5, color: C.textMuted }}>Chưa có nhãn nào. Tạo nhãn trong "🏷 Quản lý nhãn" ở thư viện.</div>;
+  }
+  return (
+    <div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: activeLevel1?.children.length ? 10 : 0 }}>
+        <button type="button" onClick={() => onChangeLevel1(null)}
+          style={{ ...btnS(!level1 ? "primary" : "outline"), padding: "6px 12px", fontSize: 12.5 }}>Không gắn nhãn</button>
+        {tags.map(t => (
+          <button type="button" key={t.id} onClick={() => onChangeLevel1(t.id === level1 ? null : t.id)}
+            style={{ ...btnS(t.id === level1 ? "primary" : "outline"), padding: "6px 12px", fontSize: 12.5 }}>
+            {t.name}
+          </button>
+        ))}
+      </div>
+      {activeLevel1 && activeLevel1.children.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingLeft: 12, borderLeft: `2px solid ${C.line}` }}>
+          {activeLevel1.children.map(c => (
+            <button type="button" key={c.id} onClick={() => onChangeLevel2(c.id === level2 ? null : c.id)}
+              style={{ ...btnS(c.id === level2 ? "primary" : "ghost"), padding: "5px 11px", fontSize: 12 }}>
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AudioUploadBox({ hasAudio, label, onFileChange, small, error }) {
   const ref = useRef(null);
   return (
@@ -427,7 +507,7 @@ export default function DictationApp() {
   const [checkResult, setCheckResult] = useState(null);
   const [sentenceData, setSentenceData] = useState([]);
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", content: "" });
+  const [editForm, setEditForm] = useState({ name: "", content: "", level1TagId: null, level2TagId: null });
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -437,10 +517,28 @@ export default function DictationApp() {
   const [audioPlaying, setAudioPlaying] = useState(false);
   const [audioErr, setAudioErr] = useState(null);
 
+  // Tags: a flat list of level-1 tags, each with its own list of level-2
+  // sub-tags. A lesson carries at most one level-1 + one level-2 tag id pair.
+  const [tags, setTags] = useState([]); // [{ id, name, children: [{ id, name }] }]
+  const [newLevel1Name, setNewLevel1Name] = useState("");
+  const [newLevel2Name, setNewLevel2Name] = useState({}); // { [level1Id]: draftText }
+  const [tagDeleteConfirm, setTagDeleteConfirm] = useState(null); // { level1Id, level2Id? }
+  // Tag picker (apply/clear/cancel flow): only used for bulk-tagging every
+  // currently selected lesson at once — tagging a single lesson happens
+  // inline inside its edit form instead (see editForm.level1TagId below).
+  const [tagPickerTarget, setTagPickerTarget] = useState(null);
+  const [pickerLevel1, setPickerLevel1] = useState(null);
+  const [pickerLevel2, setPickerLevel2] = useState(null);
+  // Library groups (one per level-1 tag) are collapsed by default, showing
+  // just the header, until expanded — keeps a tagged library scannable.
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set());
+
   const [addName, setAddName] = useState("");
   const [addContent, setAddContent] = useState("");
   const [addAudio, setAddAudio] = useState(null); // {dataUrl,name,size}
   const [addAudioErr, setAddAudioErr] = useState(null);
+  const [addLevel1TagId, setAddLevel1TagId] = useState(null);
+  const [addLevel2TagId, setAddLevel2TagId] = useState(null);
 
   const [bulkEntries, setBulkEntries] = useState([{ name: "", content: "", audio: null, err: null }]);
 
@@ -452,6 +550,7 @@ export default function DictationApp() {
     (async () => {
       try { const d = await storage.get(SK_LESSONS); setLessons(JSON.parse(d.value)); } catch { setLessons([]); }
       try { const d = await storage.get(SK_RESULTS); setResults(JSON.parse(d.value)); } catch { setResults([]); }
+      try { const d = await storage.get(SK_TAGS); setTags(JSON.parse(d.value)); } catch { setTags([]); }
       setLoading(false);
     })();
     refreshStorageInfo();
@@ -477,6 +576,7 @@ export default function DictationApp() {
     refreshStorageInfo();
   };
   const saveResults = async (rs) => { setResults(rs); try { await storage.set(SK_RESULTS, JSON.stringify(rs)); } catch (e) { console.error(e); } };
+  const saveTags = async (ts) => { setTags(ts); try { await storage.set(SK_TAGS, JSON.stringify(ts)); } catch (e) { console.error(e); } };
 
   useEffect(() => {
     if (page !== "practice") return;
@@ -622,9 +722,11 @@ export default function DictationApp() {
       id: Date.now().toString(), name: addName.trim(), transcript: parsed.transcript,
       translation: parsed.translation || null,
       createdAt: new Date().toISOString(), audioDataUrl: addAudio?.dataUrl || null, audioFileName: addAudio?.name || null,
+      level1TagId: addLevel1TagId || null, level2TagId: addLevel2TagId || null,
     };
     await saveLessons([...lessons, lesson]);
     setAddName(""); setAddContent(""); setAddAudio(null); setAddAudioErr(null);
+    setAddLevel1TagId(null); setAddLevel2TagId(null);
     setSaving(false);
     setPage("library");
   };
@@ -673,10 +775,79 @@ export default function DictationApp() {
     setBulkDeleteConfirm(false);
   };
 
+  // ---- Tags (level-1 categories + level-2 sub-tags, one pair per lesson) ----
+
+  const findLevel1 = (id) => tags.find(t => t.id === id) || null;
+  const findLevel2 = (level1Id, level2Id) => findLevel1(level1Id)?.children.find(c => c.id === level2Id) || null;
+
+  const addLevel1Tag = async () => {
+    const name = newLevel1Name.trim();
+    if (!name) return;
+    await saveTags([...tags, { id: Date.now().toString(), name, children: [] }]);
+    setNewLevel1Name("");
+  };
+
+  const addLevel2Tag = async (level1Id) => {
+    const name = (newLevel2Name[level1Id] || "").trim();
+    if (!name) return;
+    const next = tags.map(t => t.id === level1Id ? { ...t, children: [...t.children, { id: Date.now().toString(), name }] } : t);
+    await saveTags(next);
+    setNewLevel2Name(p => ({ ...p, [level1Id]: "" }));
+  };
+
+  const deleteLevel1Tag = async (level1Id) => {
+    await saveTags(tags.filter(t => t.id !== level1Id));
+    // Unassign this tag (and any of its sub-tags) from every lesson that had it.
+    await saveLessons(lessons.map(l => l.level1TagId === level1Id ? { ...l, level1TagId: null, level2TagId: null } : l));
+    setTagDeleteConfirm(null);
+  };
+
+  const deleteLevel2Tag = async (level1Id, level2Id) => {
+    const next = tags.map(t => t.id === level1Id ? { ...t, children: t.children.filter(c => c.id !== level2Id) } : t);
+    await saveTags(next);
+    await saveLessons(lessons.map(l => l.level2TagId === level2Id ? { ...l, level2TagId: null } : l));
+    setTagDeleteConfirm(null);
+  };
+
+  const openTagPicker = (target) => {
+    if (target === "bulk") {
+      setPickerLevel1(null);
+      setPickerLevel2(null);
+    } else {
+      const lesson = lessons.find(l => l.id === target);
+      setPickerLevel1(lesson?.level1TagId || null);
+      setPickerLevel2(lesson?.level2TagId || null);
+    }
+    setTagPickerTarget(target);
+  };
+
+  const closeTagPicker = () => { setTagPickerTarget(null); setPickerLevel1(null); setPickerLevel2(null); };
+
+  const applyTagPicker = async () => {
+    if (tagPickerTarget === "bulk") {
+      await saveLessons(lessons.map(l => selectedIds.has(l.id) ? { ...l, level1TagId: pickerLevel1, level2TagId: pickerLevel2 } : l));
+    } else if (tagPickerTarget) {
+      await saveLessons(lessons.map(l => l.id === tagPickerTarget ? { ...l, level1TagId: pickerLevel1, level2TagId: pickerLevel2 } : l));
+    }
+    closeTagPicker();
+  };
+
+  const clearTagPicker = async () => {
+    if (tagPickerTarget === "bulk") {
+      await saveLessons(lessons.map(l => selectedIds.has(l.id) ? { ...l, level1TagId: null, level2TagId: null } : l));
+    } else if (tagPickerTarget) {
+      await saveLessons(lessons.map(l => l.id === tagPickerTarget ? { ...l, level1TagId: null, level2TagId: null } : l));
+    }
+    closeTagPicker();
+  };
+
   const saveEdit = async () => {
     const parsed = splitCombinedInput(editForm.content);
     if (!editForm.name.trim() || !parsed.transcript) return;
-    const updated = lessons.map(l => l.id === editingId ? { ...l, name: editForm.name.trim(), transcript: parsed.transcript, translation: parsed.translation || null } : l);
+    const updated = lessons.map(l => l.id === editingId ? {
+      ...l, name: editForm.name.trim(), transcript: parsed.transcript, translation: parsed.translation || null,
+      level1TagId: editForm.level1TagId || null, level2TagId: editForm.level2TagId || null,
+    } : l);
     await saveLessons(updated);
     setEditingId(null);
   };
@@ -686,14 +857,44 @@ export default function DictationApp() {
     return lr.length > 0 ? lr[lr.length - 1] : null;
   };
 
-  // Lessons are always shown alphabetically (A–Z) so the library order stays
-  // predictable regardless of when lessons were added.
-  const getSortedLessons = () => [...lessons].sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
+  // Lessons are always shown alphabetically (A–Z) within their group.
+  const sortAz = (arr) => [...arr].sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
+  const getSortedLessons = () => sortAz(lessons);
+
+  // Groups lessons by their level-1 tag for the library view: one section per
+  // level-1 tag (alphabetical by tag name), lessons inside sorted A–Z, and a
+  // trailing "Chưa gắn nhãn" section for anything without a tag.
+  const getGroupedLessons = () => {
+    const byTag = new Map(); // level1Id -> lessons[]
+    const untagged = [];
+    for (const lesson of lessons) {
+      if (lesson.level1TagId && findLevel1(lesson.level1TagId)) {
+        if (!byTag.has(lesson.level1TagId)) byTag.set(lesson.level1TagId, []);
+        byTag.get(lesson.level1TagId).push(lesson);
+      } else {
+        untagged.push(lesson);
+      }
+    }
+    const groups = [...byTag.entries()]
+      .map(([level1Id, ls]) => ({ key: level1Id, level1Id, name: findLevel1(level1Id).name, lessons: sortAz(ls) }))
+      .sort((a, b) => a.name.localeCompare(b.name, "vi", { sensitivity: "base" }));
+    if (untagged.length > 0) groups.push({ key: "untagged", level1Id: null, name: "Chưa gắn nhãn", lessons: sortAz(untagged) });
+    return groups;
+  };
+
+  const toggleGroupExpanded = (key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
 
   const clearAllData = async () => {
     try { await storage.delete(SK_LESSONS); } catch {}
     try { await storage.delete(SK_RESULTS); } catch {}
-    setLessons([]); setResults([]);
+    try { await storage.delete(SK_TAGS); } catch {}
+    setLessons([]); setResults([]); setTags([]);
   };
 
   if (loading) return (
@@ -754,6 +955,7 @@ export default function DictationApp() {
             <div style={{ display: "flex", gap: 10, marginBottom: 22, flexWrap: "wrap" }}>
               <button style={btnS("primary")} onClick={() => setPage("addLesson")}>＋ Thêm bài</button>
               <button style={btnS("outline")} onClick={() => setPage("bulkImport")}>▤ Thêm hàng loạt</button>
+              <button style={btnS("ghost")} onClick={() => setPage("tags")}>🏷 Quản lý nhãn</button>
               {lessons.length > 0 && (
                 <button style={{ ...btnS(selectMode ? "primary" : "ghost"), marginLeft: "auto" }} onClick={toggleSelectMode}>
                   {selectMode ? "Xong" : "Chọn nhiều"}
@@ -766,6 +968,8 @@ export default function DictationApp() {
                 <span style={{ fontSize: 12.5, color: C.textSec, fontFamily: FONT_MONO }}>Đã chọn {selectedIds.size}/{lessons.length}</span>
                 <button style={{ ...btnS("ghost"), padding: "6px 12px", fontSize: 12.5 }} onClick={selectAllLessons}>Chọn tất cả</button>
                 <button style={{ ...btnS("ghost"), padding: "6px 12px", fontSize: 12.5 }} onClick={clearSelection}>Bỏ chọn</button>
+                <button style={{ ...btnS("outline"), padding: "6px 12px", fontSize: 12.5, opacity: selectedIds.size === 0 ? 0.5 : 1 }}
+                  disabled={selectedIds.size === 0} onClick={() => openTagPicker("bulk")}>🏷 Gắn nhãn</button>
                 {bulkDeleteConfirm ? (
                   <>
                     <button style={{ ...btnS("danger"), padding: "6px 12px", fontSize: 12.5 }} onClick={deleteSelectedLessons}>Xác nhận xóa {selectedIds.size} bài</button>
@@ -778,73 +982,113 @@ export default function DictationApp() {
               </div>
             )}
 
+            {tagPickerTarget === "bulk" && (
+              <TagPicker
+                tags={tags} level1={pickerLevel1} level2={pickerLevel2}
+                onSelectLevel1={(id) => { setPickerLevel1(id); setPickerLevel2(null); }}
+                onSelectLevel2={setPickerLevel2}
+                onApply={applyTagPicker} onClear={clearTagPicker} onCancel={closeTagPicker}
+                label={`Gắn nhãn cho ${selectedIds.size} bài đã chọn`}
+              />
+            )}
+
             {lessons.length === 0 ? (
               <div style={{ textAlign: "center", padding: "70px 20px", color: C.textMuted }}>
                 <Waveform bars={20} height={36} />
                 <div style={{ fontSize: 16, marginTop: 18, marginBottom: 6, color: C.textSec, fontFamily: FONT_HEAD, fontWeight: 600 }}>Chưa có bài nào</div>
                 <div style={{ fontSize: 13.5 }}>Thêm bài mới để bắt đầu luyện tập</div>
               </div>
-            ) : getSortedLessons().map(lesson => {
-              const lr = getLastResult(lesson.id);
-              const sc = parseSentences(lesson.transcript).length;
-              const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
-              const hasAudio = !!lesson.audioDataUrl;
-              const isSelected = selectedIds.has(lesson.id);
-
-              if (editingId === lesson.id) return (
-                <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
-                  <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
-                  <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 10, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
-                    placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
-                    onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
-                    <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
-                  </div>
-                </div>
-              );
-
+            ) : getGroupedLessons().map(group => {
+              const isExpanded = expandedGroups.has(group.key);
               return (
-                <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer", border: `1px solid ${isSelected ? C.amberLine : C.line}` }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
-                  onMouseLeave={e => e.currentTarget.style.borderColor = isSelected ? C.amberLine : C.line}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    {selectMode && (
-                      <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(lesson.id)}
-                        onClick={(e) => e.stopPropagation()}
-                        style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
-                    )}
-                    <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
-                        <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
-                          {lesson.name}
-                        </span>
-                        {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
-                        {lesson.translation && <Tag>dịch</Tag>}
-                        <Tag>{sc} câu</Tag>
-                        {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
-                        {lr && (
-                          <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
-                            · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {!selectMode && (
-                      <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                        <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
-                          onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation) }); }}>✎</button>
-                        {deleteConfirm === lesson.id ? (
-                          <>
-                            <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
-                            <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
-                          </>
-                        ) : (
-                          <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
-                        )}
-                      </div>
-                    )}
+                <div key={group.key} style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: isExpanded ? 8 : 0, cursor: "pointer" }}
+                    onClick={() => toggleGroupExpanded(group.key)}>
+                    <span style={{ fontSize: 12, color: C.textMuted, width: 14, display: "inline-block", transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform .15s" }}>▸</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: group.level1Id ? C.amber : C.textMuted, fontFamily: FONT_HEAD }}>
+                      {group.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: C.textMuted, fontFamily: FONT_MONO }}>{group.lessons.length} bài</span>
+                    <div style={{ flex: 1, height: 1, background: C.line }} />
+                    <button style={{ ...btnS("ghost"), padding: "4px 10px", fontSize: 11.5 }}
+                      onClick={(e) => { e.stopPropagation(); toggleGroupExpanded(group.key); }}>
+                      {isExpanded ? "Thu gọn" : "Mở rộng"}
+                    </button>
                   </div>
+
+                  {isExpanded && group.lessons.map(lesson => {
+                    const lr = getLastResult(lesson.id);
+                    const sc = parseSentences(lesson.transcript).length;
+                    const totalAttempts = results.filter(r => r.lessonId === lesson.id).length;
+                    const hasAudio = !!lesson.audioDataUrl;
+                    const isSelected = selectedIds.has(lesson.id);
+                    const l1 = lesson.level1TagId ? findLevel1(lesson.level1TagId) : null;
+                    const l2 = l1 && lesson.level2TagId ? findLevel2(lesson.level1TagId, lesson.level2TagId) : null;
+
+                    if (editingId === lesson.id) return (
+                      <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
+                        <input style={{ ...inpS, marginBottom: 10 }} value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} placeholder="Tên bài" />
+                        <textarea style={{ ...inpS, minHeight: 180, resize: "vertical", marginBottom: 14, fontFamily: FONT_MONO, fontSize: 13.5 }} value={editForm.content}
+                          placeholder={"Transcript...\n---\nBản dịch (không bắt buộc)"}
+                          onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} />
+                        <label style={labelS}>Nhãn</label>
+                        <div style={{ marginBottom: 14 }}>
+                          <TagFields tags={tags} level1={editForm.level1TagId} level2={editForm.level2TagId}
+                            onChangeLevel1={(id) => setEditForm(p => ({ ...p, level1TagId: id, level2TagId: null }))}
+                            onChangeLevel2={(id) => setEditForm(p => ({ ...p, level2TagId: id }))} />
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <button style={btnS("primary")} onClick={saveEdit}>Lưu</button>
+                          <button style={btnS("ghost")} onClick={() => setEditingId(null)}>Hủy</button>
+                        </div>
+                      </div>
+                    );
+
+                    return (
+                      <div key={lesson.id} style={{ ...cardS, padding: "12px 14px", marginBottom: 8, cursor: "pointer", border: `1px solid ${isSelected ? C.amberLine : C.line}` }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = C.amberLine}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = isSelected ? C.amberLine : C.line}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                          {selectMode && (
+                            <input type="checkbox" checked={isSelected} onChange={() => toggleSelected(lesson.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
+                          )}
+                          <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
+                              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                                {lesson.name}
+                              </span>
+                              {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
+                              {lesson.translation && <Tag>dịch</Tag>}
+                              <Tag>{sc} câu</Tag>
+                              {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
+                              {l1 && <Tag tone="ok">{l1.name}{l2 ? ` ▸ ${l2.name}` : ""}</Tag>}
+                              {lr && (
+                                <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                                  · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {!selectMode && (
+                            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                              <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }}
+                                onClick={(e) => { e.stopPropagation(); setEditingId(lesson.id); setEditForm({ name: lesson.name, content: joinCombinedInput(lesson.transcript, lesson.translation), level1TagId: lesson.level1TagId || null, level2TagId: lesson.level2TagId || null }); }}>✎</button>
+                              {deleteConfirm === lesson.id ? (
+                                <>
+                                  <button style={{ ...btnS("danger"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); deleteLesson(lesson.id); }}>Xóa</button>
+                                  <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(null); }}>Hủy</button>
+                                </>
+                              ) : (
+                                <button style={{ ...btnS("ghost"), padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); setDeleteConfirm(lesson.id); }}>🗑</button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -854,6 +1098,66 @@ export default function DictationApp() {
               </div>
             )}
           </>
+        )}
+
+        {/* ===== TAG MANAGEMENT ===== */}
+        {page === "tags" && (
+          <div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20, fontFamily: FONT_HEAD }}>Quản lý nhãn</h2>
+
+            <div style={{ ...cardS, display: "flex", gap: 8 }}>
+              <input style={inpS} value={newLevel1Name} onChange={e => setNewLevel1Name(e.target.value)}
+                placeholder="Tên nhãn cấp 1 mới (VD: IELTS)"
+                onKeyDown={e => { if (e.key === "Enter") addLevel1Tag(); }} />
+              <button style={btnS("primary")} disabled={!newLevel1Name.trim()} onClick={addLevel1Tag}>Thêm</button>
+            </div>
+
+            {tags.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "50px 20px", color: C.textMuted, fontSize: 13.5 }}>
+                Chưa có nhãn nào. Thêm nhãn cấp 1 để bắt đầu nhóm bài học.
+              </div>
+            ) : tags.map(t => (
+              <div key={t.id} style={cardS}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, flex: 1 }}>{t.name}</span>
+                  {tagDeleteConfirm?.level1Id === t.id && !tagDeleteConfirm.level2Id ? (
+                    <>
+                      <button style={{ ...btnS("danger"), padding: "5px 10px", fontSize: 12 }} onClick={() => deleteLevel1Tag(t.id)}>Xác nhận xóa</button>
+                      <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
+                    </>
+                  ) : (
+                    <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id })}>🗑 Xóa nhãn này</button>
+                  )}
+                </div>
+
+                {t.children.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                    {t.children.map(c => (
+                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.panel2, borderRadius: 7, padding: "5px 6px 5px 10px" }}>
+                        <span style={{ fontSize: 12.5 }}>{c.name}</span>
+                        {tagDeleteConfirm?.level1Id === t.id && tagDeleteConfirm?.level2Id === c.id ? (
+                          <>
+                            <button style={{ ...btnS("danger"), padding: "3px 7px", fontSize: 11 }} onClick={() => deleteLevel2Tag(t.id, c.id)}>Xóa</button>
+                            <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
+                          </>
+                        ) : (
+                          <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id, level2Id: c.id })}>✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input style={{ ...inpS, fontSize: 13 }} value={newLevel2Name[t.id] || ""}
+                    onChange={e => setNewLevel2Name(p => ({ ...p, [t.id]: e.target.value }))}
+                    placeholder="Tên nhãn cấp 2 (VD: Listening Part 3)"
+                    onKeyDown={e => { if (e.key === "Enter") addLevel2Tag(t.id); }} />
+                  <button style={{ ...btnS("outline"), fontSize: 13 }} disabled={!(newLevel2Name[t.id] || "").trim()} onClick={() => addLevel2Tag(t.id)}>+ Thêm</button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {/* ===== ADD LESSON ===== */}
@@ -879,6 +1183,12 @@ export default function DictationApp() {
                   "(Nếu không có bản dịch, chỉ cần dán transcript, bỏ qua phần --- )\n(Nội dung trong ngoặc tròn sẽ bị bỏ qua khi chấm)"
                 } />
             </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={labelS}>Nhãn (tùy chọn)</label>
+              <TagFields tags={tags} level1={addLevel1TagId} level2={addLevel2TagId}
+                onChangeLevel1={(id) => { setAddLevel1TagId(id); setAddLevel2TagId(null); }}
+                onChangeLevel2={setAddLevel2TagId} />
+            </div>
             {addContent.trim() && (() => {
               const { transcript, translation } = splitCombinedInput(addContent);
               const enCount = parseSentences(transcript).length;
@@ -898,7 +1208,7 @@ export default function DictationApp() {
               <button style={{ ...btnS("primary"), opacity: saving ? 0.6 : 1 }} onClick={addLesson} disabled={!addName.trim() || !splitCombinedInput(addContent).transcript || saving}>
                 {saving ? "Đang lưu…" : "Lưu bài"}
               </button>
-              <button style={btnS("ghost")} onClick={() => { setAddName(""); setAddContent(""); setAddAudio(null); setPage("library"); }}>Hủy</button>
+              <button style={btnS("ghost")} onClick={() => { setAddName(""); setAddContent(""); setAddAudio(null); setAddLevel1TagId(null); setAddLevel2TagId(null); setPage("library"); }}>Hủy</button>
             </div>
           </div>
         )}

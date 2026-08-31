@@ -13,9 +13,12 @@ Web app luyện nghe chép chính tả (dictation): phát audio, tự tách câu
 - Khi chuyển sang câu tiếp theo, điểm audio đang dừng tự động trở thành mốc bắt đầu của câu kế tiếp.
 - Chấm điểm theo từ (bỏ qua hoa/thường, dấu câu, và nội dung trong dấu ngoặc `()`), hiển thị phần đúng/thiếu/thừa.
 - Phải sửa đúng 100% mới chuyển sang câu tiếp theo.
-- Lưu lịch sử kết quả từng lần luyện tập (độ chính xác tổng thể + chi tiết từng câu).
-- Sắp xếp danh sách bài học theo **A–Z** hoặc theo **thời gian thêm**.
-- Toàn bộ dữ liệu (bài học, audio, mốc, lịch sử) lưu trong `IndexedDB` của trình duyệt — không cần server hay tài khoản.
+- Gắn **nhãn cấp 1 / cấp 2** cho từng bài học (VD: `IELTS ▸ Listening Part 3`) ngay khi thêm bài mới hoặc khi sửa bài; có thể tự tạo/xóa nhãn và gắn nhãn cho nhiều bài cùng lúc.
+- Thư viện bài học được **nhóm theo nhãn cấp 1**, mỗi nhóm mặc định **thu gọn** (chỉ hiện tiêu đề + số bài) và có thể **mở rộng/thu gọn** riêng từng nhóm; trong nhóm sắp xếp **A–Z**; bài chưa gắn nhãn nằm ở nhóm "Chưa gắn nhãn".
+- Chọn nhiều bài học cùng lúc để **xóa hàng loạt**.
+- Hiển thị điểm chính xác của lần luyện gần nhất và tổng số lần đã luyện ngay trên từng bài học.
+- Thông báo **dung lượng lưu trữ** đã dùng / hạn mức của trình duyệt ngay trên thư viện.
+- Toàn bộ dữ liệu (bài học, audio, mốc, nhãn, lịch sử) lưu trong `IndexedDB` của trình duyệt — không cần server hay tài khoản.
 
 ## Yêu cầu
 
