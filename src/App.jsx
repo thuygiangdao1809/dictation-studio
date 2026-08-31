@@ -523,6 +523,10 @@ export default function DictationApp() {
   const [newLevel1Name, setNewLevel1Name] = useState("");
   const [newLevel2Name, setNewLevel2Name] = useState({}); // { [level1Id]: draftText }
   const [tagDeleteConfirm, setTagDeleteConfirm] = useState(null); // { level1Id, level2Id? }
+  const [renamingLevel1Id, setRenamingLevel1Id] = useState(null);
+  const [renameLevel1Draft, setRenameLevel1Draft] = useState("");
+  const [renamingLevel2, setRenamingLevel2] = useState(null); // { level1Id, level2Id }
+  const [renameLevel2Draft, setRenameLevel2Draft] = useState("");
   // Tag picker (apply/clear/cancel flow): only used for bulk-tagging every
   // currently selected lesson at once — tagging a single lesson happens
   // inline inside its edit form instead (see editForm.level1TagId below).
@@ -809,6 +813,27 @@ export default function DictationApp() {
     setTagDeleteConfirm(null);
   };
 
+  const startRenameLevel1 = (tag) => { setRenamingLevel1Id(tag.id); setRenameLevel1Draft(tag.name); };
+  const cancelRenameLevel1 = () => { setRenamingLevel1Id(null); setRenameLevel1Draft(""); };
+  const saveRenameLevel1 = async () => {
+    const name = renameLevel1Draft.trim();
+    if (!name) return;
+    await saveTags(tags.map(t => t.id === renamingLevel1Id ? { ...t, name } : t));
+    cancelRenameLevel1();
+  };
+
+  const startRenameLevel2 = (level1Id, child) => { setRenamingLevel2({ level1Id, level2Id: child.id }); setRenameLevel2Draft(child.name); };
+  const cancelRenameLevel2 = () => { setRenamingLevel2(null); setRenameLevel2Draft(""); };
+  const saveRenameLevel2 = async () => {
+    const name = renameLevel2Draft.trim();
+    if (!name || !renamingLevel2) return;
+    const { level1Id, level2Id } = renamingLevel2;
+    await saveTags(tags.map(t => t.id === level1Id
+      ? { ...t, children: t.children.map(c => c.id === level2Id ? { ...c, name } : c) }
+      : t));
+    cancelRenameLevel2();
+  };
+
   const openTagPicker = (target) => {
     if (target === "bulk") {
       setPickerLevel1(null);
@@ -959,7 +984,7 @@ export default function DictationApp() {
           )}
           <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
             <div className="tag-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
-              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180, flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, whiteSpace: "nowrap", flexShrink: 0 }}>
                 {lesson.name}
               </span>
               {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
@@ -1179,31 +1204,55 @@ export default function DictationApp() {
             ) : tags.map(t => (
               <div key={t.id} style={cardS}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                  <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, flex: 1 }}>{t.name}</span>
-                  {tagDeleteConfirm?.level1Id === t.id && !tagDeleteConfirm.level2Id ? (
+                  {renamingLevel1Id === t.id ? (
                     <>
-                      <button style={{ ...btnS("danger"), padding: "5px 10px", fontSize: 12 }} onClick={() => deleteLevel1Tag(t.id)}>Xác nhận xóa</button>
-                      <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
+                      <input style={{ ...inpS, flex: 1 }} autoFocus value={renameLevel1Draft}
+                        onChange={e => setRenameLevel1Draft(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter") saveRenameLevel1(); if (e.key === "Escape") cancelRenameLevel1(); }} />
+                      <button style={{ ...btnS("primary"), padding: "5px 10px", fontSize: 12 }} disabled={!renameLevel1Draft.trim()} onClick={saveRenameLevel1}>Lưu</button>
+                      <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={cancelRenameLevel1}>Hủy</button>
                     </>
                   ) : (
-                    <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id })}>🗑 Xóa nhãn này</button>
+                    <>
+                      <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, flex: 1 }}>{t.name}</span>
+                      <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => startRenameLevel1(t)}>✎ Sửa tên</button>
+                      {tagDeleteConfirm?.level1Id === t.id && !tagDeleteConfirm.level2Id ? (
+                        <>
+                          <button style={{ ...btnS("danger"), padding: "5px 10px", fontSize: 12 }} onClick={() => deleteLevel1Tag(t.id)}>Xác nhận xóa</button>
+                          <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
+                        </>
+                      ) : (
+                        <button style={{ ...btnS("ghost"), padding: "5px 10px", fontSize: 12 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id })}>🗑 Xóa</button>
+                      )}
+                    </>
                   )}
                 </div>
 
                 {t.children.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
                     {t.children.map(c => (
-                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.panel2, borderRadius: 7, padding: "5px 6px 5px 10px" }}>
-                        <span style={{ fontSize: 12.5 }}>{c.name}</span>
-                        {tagDeleteConfirm?.level1Id === t.id && tagDeleteConfirm?.level2Id === c.id ? (
-                          <>
-                            <button style={{ ...btnS("danger"), padding: "3px 7px", fontSize: 11 }} onClick={() => deleteLevel2Tag(t.id, c.id)}>Xóa</button>
-                            <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
-                          </>
-                        ) : (
-                          <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id, level2Id: c.id })}>✕</button>
-                        )}
-                      </div>
+                      renamingLevel2?.level1Id === t.id && renamingLevel2?.level2Id === c.id ? (
+                        <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.panel2, borderRadius: 7, padding: "5px 6px 5px 10px" }}>
+                          <input style={{ ...inpS, fontSize: 12.5, padding: "4px 8px", width: 160 }} autoFocus value={renameLevel2Draft}
+                            onChange={e => setRenameLevel2Draft(e.target.value)}
+                            onKeyDown={e => { if (e.key === "Enter") saveRenameLevel2(); if (e.key === "Escape") cancelRenameLevel2(); }} />
+                          <button style={{ ...btnS("primary"), padding: "3px 7px", fontSize: 11 }} disabled={!renameLevel2Draft.trim()} onClick={saveRenameLevel2}>Lưu</button>
+                          <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={cancelRenameLevel2}>Hủy</button>
+                        </div>
+                      ) : (
+                        <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, background: C.panel2, borderRadius: 7, padding: "5px 6px 5px 10px" }}>
+                          <span style={{ fontSize: 12.5 }}>{c.name}</span>
+                          <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => startRenameLevel2(t.id, c)}>✎</button>
+                          {tagDeleteConfirm?.level1Id === t.id && tagDeleteConfirm?.level2Id === c.id ? (
+                            <>
+                              <button style={{ ...btnS("danger"), padding: "3px 7px", fontSize: 11 }} onClick={() => deleteLevel2Tag(t.id, c.id)}>Xóa</button>
+                              <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm(null)}>Hủy</button>
+                            </>
+                          ) : (
+                            <button style={{ ...btnS("ghost"), padding: "3px 7px", fontSize: 11 }} onClick={() => setTagDeleteConfirm({ level1Id: t.id, level2Id: c.id })}>✕</button>
+                          )}
+                        </div>
+                      )
                     ))}
                   </div>
                 )}

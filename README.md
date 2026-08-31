@@ -13,7 +13,7 @@ Web app luyện nghe chép chính tả (dictation): phát audio, tự tách câu
 - Khi chuyển sang câu tiếp theo, điểm audio đang dừng tự động trở thành mốc bắt đầu của câu kế tiếp.
 - Chấm điểm theo từ (bỏ qua hoa/thường, dấu câu, và nội dung trong dấu ngoặc `()`), hiển thị phần đúng/thiếu/thừa.
 - Phải sửa đúng 100% mới chuyển sang câu tiếp theo.
-- Gắn **nhãn cấp 1 / cấp 2** cho từng bài học (VD: `IELTS ▸ Listening Part 3`) ngay khi thêm bài mới hoặc khi sửa bài; có thể tự tạo/xóa nhãn và gắn nhãn cho nhiều bài cùng lúc.
+- Gắn **nhãn cấp 1 / cấp 2** cho từng bài học (VD: `IELTS ▸ Listening Part 3`) ngay khi thêm bài mới hoặc khi sửa bài; có thể tự tạo/**sửa tên**/xóa nhãn và gắn nhãn cho nhiều bài cùng lúc.
 - Thư viện bài học được **nhóm theo nhãn cấp 1**, mỗi nhóm mặc định **thu gọn** (chỉ hiện tiêu đề + số bài) và có thể **mở rộng/thu gọn** riêng từng nhóm; nếu nhãn cấp 1 có nhãn cấp 2 con, bài học trong nhóm đó được **chia nhỏ tiếp theo nhãn cấp 2**, cũng mặc định thu gọn và mở/đóng riêng; trong cùng cấp sắp xếp **A–Z**; bài chưa gắn nhãn nằm ở nhóm "Chưa gắn nhãn".
 - Chọn nhiều bài học cùng lúc để **xóa hàng loạt**.
 - Hiển thị điểm chính xác của lần luyện gần nhất và tổng số lần đã luyện ngay trên từng bài học.
