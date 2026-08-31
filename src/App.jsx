@@ -382,7 +382,7 @@ function Tag({ children, tone = "muted" }) {
     ok: { bg: C.okBg, color: C.ok }, warn: { bg: C.warnBg, color: C.warn },
     bad: { bg: C.badBg, color: C.bad }, muted: { bg: C.panel2, color: C.textMuted },
   }[tone];
-  return <span style={{ fontSize: 10.5, background: map.bg, color: map.color, padding: "2px 7px", borderRadius: 5, fontWeight: 600, fontFamily: FONT_MONO, whiteSpace: "nowrap" }}>{children}</span>;
+  return <span style={{ fontSize: 9.5, background: map.bg, color: map.color, padding: "1.5px 5px", borderRadius: 4, fontWeight: 600, fontFamily: FONT_MONO, whiteSpace: "nowrap", flexShrink: 0 }}>{children}</span>;
 }
 
 // Inline panel for choosing a level-1 tag and, optionally, one of its level-2
@@ -927,7 +927,6 @@ export default function DictationApp() {
     const hasAudio = !!lesson.audioDataUrl;
     const isSelected = selectedIds.has(lesson.id);
     const l1 = lesson.level1TagId ? findLevel1(lesson.level1TagId) : null;
-    const l2 = l1 && lesson.level2TagId ? findLevel2(lesson.level1TagId, lesson.level2TagId) : null;
 
     if (editingId === lesson.id) return (
       <div key={lesson.id} style={{ ...cardS, border: `1px solid ${C.amberLine}` }}>
@@ -959,17 +958,17 @@ export default function DictationApp() {
               style={{ width: 18, height: 18, accentColor: C.amber, flexShrink: 0, cursor: "pointer" }} />
           )}
           <div onClick={() => selectMode ? toggleSelected(lesson.id) : startPractice(lesson)} style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", rowGap: 4 }}>
-              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+            <div className="tag-row" style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap", overflowX: "auto" }}>
+              <span style={{ fontWeight: 700, fontSize: 14.5, fontFamily: FONT_HEAD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180, flexShrink: 0 }}>
                 {lesson.name}
               </span>
               {hasAudio ? <Tag tone="ok">● audio</Tag> : <Tag tone="warn">chưa audio</Tag>}
               {lesson.translation && <Tag>dịch</Tag>}
               <Tag>{sc} câu</Tag>
               {totalAttempts > 0 && <Tag>{totalAttempts} lần</Tag>}
-              {l1 && <Tag tone="ok">{l1.name}{l2 ? ` ▸ ${l2.name}` : ""}</Tag>}
+              {l1 && <Tag>{l1.name}</Tag>}
               {lr && (
-                <span style={{ fontSize: 12, color: C.textSec, fontFamily: FONT_MONO }}>
+                <span style={{ fontSize: 11.5, color: C.textSec, fontFamily: FONT_MONO, whiteSpace: "nowrap", flexShrink: 0 }}>
                   · <span style={{ color: lr.overallAccuracy >= 0.8 ? C.ok : lr.overallAccuracy >= 0.5 ? C.warn : C.bad, fontWeight: 700 }}>{Math.round(lr.overallAccuracy * 100)}%</span>
                 </span>
               )}

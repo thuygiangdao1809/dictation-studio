@@ -14,3 +14,14 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Lesson-row tag strip: scrolls horizontally instead of wrapping, with the
+   scrollbar itself hidden (Firefox via scrollbar-width, Chrome/Safari via
+   the pseudo-element below) so it reads as a single clean line. */
+.tag-row {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.tag-row::-webkit-scrollbar {
+  display: none;
+}
