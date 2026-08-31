@@ -544,7 +544,9 @@ export default function DictationApp() {
   const [addLevel1TagId, setAddLevel1TagId] = useState(null);
   const [addLevel2TagId, setAddLevel2TagId] = useState(null);
 
-  const [bulkEntries, setBulkEntries] = useState([{ name: "", content: "", audio: null, err: null }]);
+  const [bulkEntries, setBulkEntries] = useState([{ name: "", content: "", audio: null, err: null, level1TagId: null, level2TagId: null }]);
+  const [bulkCommonLevel1, setBulkCommonLevel1] = useState(null);
+  const [bulkCommonLevel2, setBulkCommonLevel2] = useState(null);
 
   const audioPlayerRef = useRef(null);
   const audioTimeRef = useRef(0);
@@ -745,10 +747,12 @@ export default function DictationApp() {
         id: (Date.now() + i).toString(), name: e.name.trim(), transcript: parsed.transcript,
         translation: parsed.translation || null,
         createdAt: new Date().toISOString(), audioDataUrl: e.audio?.dataUrl || null, audioFileName: e.audio?.name || null,
+        level1TagId: e.level1TagId || null, level2TagId: e.level2TagId || null,
       };
     });
     await saveLessons([...lessons, ...newLessons]);
-    setBulkEntries([{ name: "", content: "", audio: null, err: null }]);
+    setBulkEntries([{ name: "", content: "", audio: null, err: null, level1TagId: null, level2TagId: null }]);
+    setBulkCommonLevel1(null); setBulkCommonLevel2(null);
     setSaving(false);
     setPage("library");
   };
@@ -1326,6 +1330,20 @@ export default function DictationApp() {
         {page === "bulkImport" && (
           <div>
             <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 20, fontFamily: FONT_HEAD }}>Thêm hàng loạt</h2>
+
+            <div style={{ ...cardS, background: C.panel2 }}>
+              <label style={labelS}>Gắn nhãn chung cho tất cả các bài bên dưới (tùy chọn)</label>
+              <div style={{ marginBottom: 10 }}>
+                <TagFields tags={tags} level1={bulkCommonLevel1} level2={bulkCommonLevel2}
+                  onChangeLevel1={(id) => { setBulkCommonLevel1(id); setBulkCommonLevel2(null); }}
+                  onChangeLevel2={setBulkCommonLevel2} />
+              </div>
+              <button style={btnS("outline")}
+                onClick={() => setBulkEntries(prev => prev.map(e => ({ ...e, level1TagId: bulkCommonLevel1, level2TagId: bulkCommonLevel2 })))}>
+                Áp dụng cho tất cả các bài bên dưới
+              </button>
+            </div>
+
             {bulkEntries.map((entry, idx) => (
               <div key={idx} style={cardS}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
@@ -1360,16 +1378,22 @@ export default function DictationApp() {
                     </div>
                   );
                 })()}
+                <div style={{ marginTop: 12 }}>
+                  <label style={labelS}>Nhãn</label>
+                  <TagFields tags={tags} level1={entry.level1TagId} level2={entry.level2TagId}
+                    onChangeLevel1={(id) => { const n = [...bulkEntries]; n[idx] = { ...n[idx], level1TagId: id, level2TagId: null }; setBulkEntries(n); }}
+                    onChangeLevel2={(id) => { const n = [...bulkEntries]; n[idx] = { ...n[idx], level2TagId: id }; setBulkEntries(n); }} />
+                </div>
               </div>
             ))}
             <button style={{ ...btnS("ghost"), width: "100%", marginBottom: 20, borderStyle: "dashed" }}
-              onClick={() => setBulkEntries(prev => [...prev, { name: "", content: "", audio: null, err: null }])}>＋ Thêm bài</button>
+              onClick={() => setBulkEntries(prev => [...prev, { name: "", content: "", audio: null, err: null, level1TagId: bulkCommonLevel1, level2TagId: bulkCommonLevel2 }])}>＋ Thêm bài</button>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...btnS("primary"), opacity: saving ? 0.6 : 1 }} onClick={bulkAdd}
                 disabled={!bulkEntries.some(e => e.name.trim() && splitCombinedInput(e.content).transcript) || saving}>
                 {saving ? "Đang lưu…" : `Lưu tất cả (${bulkEntries.filter(e => e.name.trim() && splitCombinedInput(e.content).transcript).length} bài)`}
               </button>
-              <button style={btnS("ghost")} onClick={() => { setBulkEntries([{ name: "", content: "", audio: null, err: null }]); setPage("library"); }}>Hủy</button>
+              <button style={btnS("ghost")} onClick={() => { setBulkEntries([{ name: "", content: "", audio: null, err: null, level1TagId: null, level2TagId: null }]); setBulkCommonLevel1(null); setBulkCommonLevel2(null); setPage("library"); }}>Hủy</button>
             </div>
           </div>
         )}
